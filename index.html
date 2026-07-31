@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Minecraft Remote Play</title>
+<style>
+  :root{
+    --accent:#5ee6a0;
+    --accent-dim:#2b7a54;
+    --bg:#0a0d0c;
+    --panel:rgba(15,18,17,0.82);
+    --danger:#e65e5e;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--bg); overflow:hidden;
+    font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color:#e8f5ee;
+  }
+  #video{
+    position:fixed; inset:0; width:100%; height:100%;
+    object-fit:contain; background:#000; z-index:1;
+  }
+
+  /* ---------- Écran de connexion ---------- */
+  #connectScreen{
+    position:fixed; inset:0; z-index:50;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 30% 20%, #132018 0%, #050706 70%);
+  }
+  #connectBox{
+    width:min(88vw, 380px);
+    background:var(--panel);
+    border:1px solid rgba(94,230,160,0.25);
+    border-radius:16px;
+    padding:28px 24px;
+    backdrop-filter:blur(6px);
+  }
+  #connectBox h1{
+    font-size:1.15rem; margin:0 0 4px; letter-spacing:0.02em;
+    color:var(--accent);
+  }
+  #connectBox p{margin:0 0 20px; font-size:0.8rem; color:#9db3a8;}
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:0.7rem; color:#8fa89b; margin-bottom:6px; letter-spacing:0.04em; text-transform:uppercase;}
+  .field input{
+    width:100%; padding:12px 14px; border-radius:10px;
+    border:1px solid rgba(255,255,255,0.12);
+    background:rgba(255,255,255,0.04); color:#eafff2;
+    font-size:0.95rem;
+  }
+  .field input:focus{outline:none; border-color:var(--accent);}
+  #connectBtn{
+    width:100%; padding:13px; margin-top:6px;
+    border:none; border-radius:10px;
+    background:var(--accent); color:#05130c;
+    font-weight:600; font-size:0.95rem; letter-spacing:0.02em;
+  }
+  #connectBtn:active{transform:scale(0.98);}
+  #connectStatus{
+    margin-top:14px; font-size:0.78rem; text-align:center; min-height:1.2em;
+    color:#9db3a8;
+  }
+  #connectStatus.error{color:var(--danger);}
+
+  /* ---------- Overlay de contrôle ---------- */
+  #hud{position:fixed; inset:0; z-index:10; display:none;}
+  #hud.active{display:block;}
+
+  .touch-zone{position:absolute; touch-action:none;}
+
+  /* Joystick */
+  #joystickZone{ left:0; bottom:0; width:46%; height:52%; }
+  #joyBase{
+    position:absolute; width:120px; height:120px; border-radius:50%;
+    border:2px solid rgba(94,230,160,0.35);
+    background:rgba(255,255,255,0.03);
+    left:30px; bottom:30px;
+  }
+  #joyStick{
+    position:absolute; width:52px; height:52px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #7cf0b6, var(--accent-dim));
+    left:50%; top:50%; transform:translate(-50%,-50%);
+    box-shadow:0 0 14px rgba(94,230,160,0.5);
+  }
+
+  /* Boutons Courir / S'accroupir, juste au-dessus du joystick */
+  #leftTopButtons{
+    position:absolute; left:30px; bottom:172px; z-index:11;
+    display:flex; gap:10px; touch-action:none;
+  }
+
+  /* Zone souris (regarder uniquement -- les clics sont sur des boutons dédiés) */
+  #mouseZone{ right:0; top:0; width:60%; height:100%; }
+
+  /* Point visuel qui suit le doigt pendant qu'on regarde autour de soi */
+  #touchDot{
+    position:fixed; width:16px; height:16px; border-radius:50%;
+    background:rgba(230,94,94,0.6); border:2px solid var(--danger);
+    transform:translate(-50%,-50%); pointer-events:none; z-index:12;
+    opacity:0; transition:opacity 0.08s;
+  }
+  #touchDot.visible{opacity:1;}
+
+  .actionBtn{
+    width:64px; height:44px; border-radius:22px;
+    background:rgba(20,24,22,0.75); border:1px solid rgba(255,255,255,0.15);
+    color:#dcefe4; font-size:0.65rem; font-weight:600; letter-spacing:0.03em;
+    display:flex; align-items:center; justify-content:center;
+    text-align:center; line-height:1.05;
+  }
+  .actionBtn.locked{
+    background:var(--accent); color:#05130c; border-color:var(--accent);
+    box-shadow:0 0 12px rgba(94,230,160,0.55);
+  }
+  .actionBtn.pressed{filter:brightness(1.3);}
+
+  /* Colonne de boutons à droite : panneau souris (rétractable) + sauter + clavier */
+  #rightButtons{
+    position:absolute; right:14px; top:50%; transform:translateY(-50%);
+    z-index:11; display:flex; flex-direction:column; gap:12px; touch-action:none;
+  }
+  #rightButtons .actionBtn{ width:60px; }
+  #leftClickBtn{ background:rgba(94,230,160,0.14); border-color:rgba(94,230,160,0.4); }
+  #rightClickBtn{ background:rgba(230,94,94,0.14); border-color:rgba(230,94,94,0.4); }
+
+  #mousePanel{
+    display:none; flex-direction:column; gap:12px;
+  }
+  #mousePanel.visible{ display:flex; }
+
+  #keyboardToggle{
+    width:60px; height:44px; border-radius:22px;
+    background:rgba(20,24,22,0.75); border:1px solid rgba(255,255,255,0.15);
+    color:#dcefe4; font-size:1.1rem; display:flex; align-items:center; justify-content:center;
+  }
+
+  #hiddenTextInput{
+    position:fixed; top:-100px; left:0; width:1px; height:1px; opacity:0; z-index:-1;
+  }
+
+  /* Barres du haut : Échap + Minage à gauche, Souris + latence à droite */
+  #topLeftBar, #topRightBar{
+    position:absolute; top:14px; z-index:11; display:flex; gap:10px; align-items:center;
+  }
+  #topLeftBar{ left:14px; }
+  #topRightBar{ right:14px; }
+  #escBtn, #miningBtn, #mouseToggleBtn{
+    width:40px; height:40px; border-radius:10px;
+    background:rgba(20,24,22,0.75); border:1px solid rgba(255,255,255,0.15);
+    color:#dcefe4; font-size:0.9rem; display:flex; align-items:center; justify-content:center;
+  }
+  #miningBtn.locked, #mouseToggleBtn.locked{
+    background:var(--accent); color:#05130c; border-color:var(--accent);
+    box-shadow:0 0 12px rgba(94,230,160,0.55);
+  }
+
+  #latencyBadge{
+    font-size:0.65rem; padding:5px 9px; border-radius:8px;
+    background:rgba(20,24,22,0.75); color:#9db3a8;
+  }
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted></video>
+<div id="touchDot"></div>
+
+<!-- Écran de connexion -->
+<div id="connectScreen">
+  <div id="connectBox">
+    <h1>Minecraft Remote Play</h1>
+    <p>Connecte-toi au serveur qui tourne sur ton PC.</p>
+    <div class="field">
+      <label for="serverAddr">Adresse du serveur (PC)</label>
+      <input id="serverAddr" type="text" placeholder="https://tonpseudo.duckdns.org:8765" autocapitalize="off" autocorrect="off">
+    </div>
+    <div class="field">
+      <label for="serverPass">Mot de passe</label>
+      <input id="serverPass" type="password" placeholder="Mot de passe du config.json">
+    </div>
+    <button id="connectBtn">Se connecter</button>
+    <div id="connectStatus"></div>
+  </div>
+</div>
+
+<!-- Overlay de jeu -->
+<div id="hud">
+  <div id="topLeftBar">
+    <button id="escBtn">✕</button>
+    <button id="miningBtn">⛏</button>
+  </div>
+  <div id="topRightBar">
+    <button id="mouseToggleBtn">🖱</button>
+    <div id="latencyBadge">--</div>
+  </div>
+
+  <div id="joystickZone" class="touch-zone">
+    <div id="joyBase">
+      <div id="joyStick"></div>
+    </div>
+  </div>
+
+  <div id="leftTopButtons">
+    <div class="actionBtn" id="runBtn">Courir</div>
+    <div class="actionBtn" id="crouchBtn">S'accroupir</div>
+  </div>
+
+  <div id="mouseZone" class="touch-zone"></div>
+
+  <div id="rightButtons">
+    <div id="mousePanel">
+      <div class="actionBtn" id="wheelUpBtn">▲</div>
+      <div class="actionBtn" id="leftClickBtn">Clic G</div>
+      <div class="actionBtn" id="rightClickBtn">Clic D</div>
+      <div class="actionBtn" id="wheelDownBtn">▼</div>
+    </div>
+    <div class="actionBtn" id="jumpBtn">Sauter</div>
+    <button id="keyboardToggle">⌨</button>
+  </div>
+
+  <input id="hiddenTextInput" type="text" autocapitalize="off" autocorrect="off">
+</div>
+
+
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // État global
+  // ---------------------------------------------------------------------
+  let pc = null;
+  let dataChannel = null;
+  const video = document.getElementById("video");
+  const hud = document.getElementById("hud");
+  const connectScreen = document.getElementById("connectScreen");
+  const connectStatus = document.getElementById("connectStatus");
+
+  function sendControl(obj){
+    if(dataChannel && dataChannel.readyState === "open"){
+      dataChannel.send(JSON.stringify(obj));
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Connexion WebRTC
+  // ---------------------------------------------------------------------
+  // Astuce vitesse : la préparation de la connexion (récupération des
+  // candidats réseau ICE, potentiellement 1 à 3 secondes) démarre dès le
+  // chargement de la page, en arrière-plan, PENDANT que la personne tape
+  // l'adresse et le mot de passe -- au lieu d'attendre le clic sur
+  // "Se connecter" pour la lancer. Un timeout de secours évite aussi de
+  // rester bloqué indéfiniment si la récupération ne se termine jamais.
+  let iceReadyPromise = null;
+
+  function createPeerConnection(){
+    const newPc = new RTCPeerConnection({
+      iceServers: [
+        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+        {
+          urls: [
+            "turn:openrelay.metered.ca:80",
+            "turn:openrelay.metered.ca:80?transport=tcp",
+            "turn:openrelay.metered.ca:443",
+            "turns:openrelay.metered.ca:443"
+          ],
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
+      ],
+      iceCandidatePoolSize: 4
+    });
+
+    newPc.addTransceiver("video", { direction: "recvonly" });
+    dataChannel = newPc.createDataChannel("controls");
+    dataChannel.onopen = () => console.log("Canal de contrôle ouvert");
+
+    newPc.ontrack = (event) => {
+      video.srcObject = event.streams[0];
+      showHud();
+    };
+
+    newPc.onconnectionstatechange = () => {
+      console.log("État connexion WebRTC :", newPc.connectionState);
+      if(newPc.connectionState === "connected"){
+        connectStatus.textContent = "";
+      } else if(newPc.connectionState === "failed" || newPc.connectionState === "disconnected"){
+        connectStatus.textContent = "Connexion impossible ou perdue. Appuie de nouveau sur \"Se connecter\" pour réessayer.";
+        connectStatus.className = "error";
+        pc = null; // force une connexion neuve au prochain essai
+      }
+    };
+
+    return newPc;
+  }
+
+  function prepareConnection(){
+    pc = createPeerConnection();
+    iceReadyPromise = (async () => {
+      const offerDesc = await pc.createOffer();
+      await pc.setLocalDescription(offerDesc);
+      // On n'attend jamais plus de 2.5s la fin de la collecte des candidats :
+      // l'essentiel est généralement prêt bien avant, et ça évite un blocage
+      // interminable si un candidat traîne à se résoudre.
+      await Promise.race([
+        waitIceGatheringComplete(pc),
+        new Promise((resolve) => setTimeout(resolve, 2500))
+      ]);
+    })();
+  }
+
+  prepareConnection(); // démarre tout de suite, en arrière-plan
+
+  async function connect(){
+    const addr = document.getElementById("serverAddr").value.trim().replace(/\/$/, "");
+    const password = document.getElementById("serverPass").value;
+
+    if(!addr){
+      connectStatus.textContent = "Indique l'adresse du serveur.";
+      connectStatus.className = "error";
+      return;
+    }
+
+    connectStatus.textContent = "Connexion en cours...";
+    connectStatus.className = "";
+
+    if(!pc){ prepareConnection(); }
+    await iceReadyPromise;
+
+    // Si la connexion n'a toujours pas abouti après 12s, on prévient plutôt
+    // que de laisser "Connexion en cours..." indéfiniment.
+    const stuckTimer = setTimeout(() => {
+      if(pc && pc.connectionState !== "connected"){
+        connectStatus.textContent = "Ça prend plus longtemps que prévu. Vérifie l'adresse et ta connexion internet, ou réessaie.";
+        connectStatus.className = "error";
+      }
+    }, 12000);
+
+    try{
+      const res = await fetch(addr + "/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sdp: pc.localDescription.sdp,
+          type: pc.localDescription.type,
+          password: password
+        })
+      });
+
+      if(!res.ok){
+        clearTimeout(stuckTimer);
+        const err = await res.json().catch(() => ({}));
+        connectStatus.textContent = err.error || ("Erreur serveur (" + res.status + ")");
+        connectStatus.className = "error";
+        return;
+      }
+
+      const answer = await res.json();
+      await pc.setRemoteDescription(answer);
+      connectStatus.textContent = "Négociation vidéo en cours...";
+    }catch(e){
+      clearTimeout(stuckTimer);
+      connectStatus.textContent = "Impossible de joindre le serveur. Vérifie l'adresse et ta connexion internet.";
+      connectStatus.className = "error";
+    }
+  }
+
+  function waitIceGatheringComplete(pc){
+    return new Promise((resolve) => {
+      if(pc.iceGatheringState === "complete"){ resolve(); return; }
+      function check(){
+        if(pc.iceGatheringState === "complete"){
+          pc.removeEventListener("icegatheringstatechange", check);
+          resolve();
+        }
+      }
+      pc.addEventListener("icegatheringstatechange", check);
+    });
+  }
+
+  function showHud(){
+    connectScreen.style.display = "none";
+    hud.classList.add("active");
+    if(video.requestFullscreen) video.requestFullscreen().catch(()=>{});
+    if(screen.orientation && screen.orientation.lock){
+      screen.orientation.lock("landscape").catch(()=>{});
+    }
+  }
+
+  document.getElementById("connectBtn").addEventListener("click", connect);
+
+  document.getElementById("escBtn").addEventListener("click", () => {
+    sendControl({t:"key", k:"esc", s:"down"});
+    setTimeout(() => sendControl({t:"key", k:"esc", s:"up"}), 60);
+  });
+
+  // ---------------------------------------------------------------------
+  // Joystick (ZQSD)
+  // ---------------------------------------------------------------------
+  const joyZone = document.getElementById("joystickZone");
+  const joyBase = document.getElementById("joyBase");
+  const joyStick = document.getElementById("joyStick");
+  let joyPointerId = null;
+  let joyCenter = {x:0, y:0};
+  let activeMoveKeys = new Set();
+  const JOY_RADIUS = 60;
+  const DEADZONE = 0.28;
+
+  function baseCenter(){
+    const r = joyBase.getBoundingClientRect();
+    return {x: r.left + r.width/2, y: r.top + r.height/2};
+  }
+
+  function updateJoystick(dx, dy){
+    const dist = Math.min(Math.hypot(dx, dy), JOY_RADIUS);
+    const angle = Math.atan2(dy, dx);
+    const clampedX = Math.cos(angle) * dist;
+    const clampedY = Math.sin(angle) * dist;
+    // Le stick est centré par défaut via CSS (left:50%, top:50%,
+    // translate(-50%,-50%)) -- on ajoute juste le décalage du doigt
+    // par-dessus ce point central. resetJoystick() revient exactement à ce
+    // même transform de base, donc le stick recentre parfaitement à chaque
+    // relâchement.
+    joyStick.style.transform =
+      `translate(calc(-50% + ${clampedX}px), calc(-50% + ${clampedY}px))`;
+
+    const norm = dist / JOY_RADIUS;
+    const wanted = new Set();
+    if(norm > DEADZONE){
+      const deg = angle * 180 / Math.PI; // 0=droite, 90=bas (écran), -90=haut
+      // Avant (Z) = haut de l'écran, arrière (S) = bas, gauche (Q), droite (D)
+      // En diagonale, deux touches sont actives en même temps (ex: Z+D).
+      if(deg > -157.5 && deg < -22.5) wanted.add("z");
+      if(deg > 22.5 && deg < 157.5) wanted.add("s");
+      if(deg > 112.5 || deg < -112.5) wanted.add("q");
+      if(deg > -67.5 && deg < 67.5) wanted.add("d");
+    }
+
+    for(const k of activeMoveKeys){
+      if(!wanted.has(k)){ sendControl({t:"key", k, s:"up"}); }
+    }
+    for(const k of wanted){
+      if(!activeMoveKeys.has(k)){ sendControl({t:"key", k, s:"down"}); }
+    }
+    activeMoveKeys = wanted;
+  }
+
+  function resetJoystick(){
+    joyStick.style.transform = "translate(-50%, -50%)";
+    for(const k of activeMoveKeys){ sendControl({t:"key", k, s:"up"}); }
+    activeMoveKeys = new Set();
+  }
+
+  joyZone.addEventListener("pointerdown", (e) => {
+    if(joyPointerId !== null) return;
+    joyPointerId = e.pointerId;
+    joyCenter = baseCenter();
+    updateJoystick(e.clientX - joyCenter.x, e.clientY - joyCenter.y);
+    joyZone.setPointerCapture(e.pointerId);
+  });
+  joyZone.addEventListener("pointermove", (e) => {
+    if(e.pointerId !== joyPointerId) return;
+    updateJoystick(e.clientX - joyCenter.x, e.clientY - joyCenter.y);
+  });
+  function joyEnd(e){
+    if(e.pointerId !== joyPointerId) return;
+    joyPointerId = null;
+    resetJoystick();
+  }
+  joyZone.addEventListener("pointerup", joyEnd);
+  joyZone.addEventListener("pointercancel", joyEnd);
+
+  // ---------------------------------------------------------------------
+  // Zone souris : regarder autour de soi (glisser le doigt)
+  // ---------------------------------------------------------------------
+  const mouseZone = document.getElementById("mouseZone");
+  const touchDot = document.getElementById("touchDot");
+  const SENSITIVITY = 1.5;
+  let lookPointerId = null;
+  let lookLast = {x:0, y:0};
+
+  mouseZone.addEventListener("pointerdown", (e) => {
+    if(lookPointerId !== null) return; // un seul doigt pilote le regard
+    lookPointerId = e.pointerId;
+    lookLast = {x:e.clientX, y:e.clientY};
+    mouseZone.setPointerCapture(e.pointerId);
+    touchDot.style.left = e.clientX + "px";
+    touchDot.style.top = e.clientY + "px";
+    touchDot.classList.add("visible");
+    if(miningMode){
+      sendControl({t:"mbtn", b:"left", s:"down"});
+      miningPointerDown = true;
+    }
+  });
+
+  mouseZone.addEventListener("pointermove", (e) => {
+    if(e.pointerId !== lookPointerId) return;
+    const dx = e.clientX - lookLast.x;
+    const dy = e.clientY - lookLast.y;
+    lookLast = {x:e.clientX, y:e.clientY};
+    sendControl({t:"mmove", dx: Math.round(dx*SENSITIVITY), dy: Math.round(dy*SENSITIVITY)});
+    touchDot.style.left = e.clientX + "px";
+    touchDot.style.top = e.clientY + "px";
+  });
+
+  function lookEnd(e){
+    if(e.pointerId !== lookPointerId) return;
+    lookPointerId = null;
+    touchDot.classList.remove("visible");
+    if(miningPointerDown){
+      sendControl({t:"mbtn", b:"left", s:"up"});
+      miningPointerDown = false;
+    }
+  }
+  mouseZone.addEventListener("pointerup", lookEnd);
+  mouseZone.addEventListener("pointercancel", lookEnd);
+
+  // ---------------------------------------------------------------------
+  // Mode Minage : quand actif, poser le doigt sur la zone de regard
+  // déclenche un clic gauche MAINTENU (jusqu'au relâchement du doigt), tout
+  // en continuant à pouvoir regarder autour de soi pendant ce temps.
+  // ---------------------------------------------------------------------
+  let miningMode = false;
+  let miningPointerDown = false;
+  const miningBtn = document.getElementById("miningBtn");
+  miningBtn.addEventListener("click", () => {
+    miningMode = !miningMode;
+    miningBtn.classList.toggle("locked", miningMode);
+    if(!miningMode && miningPointerDown){
+      sendControl({t:"mbtn", b:"left", s:"up"});
+      miningPointerDown = false;
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // Panneau souris (clics + molette) : caché par défaut, un bouton l'affiche
+  // ---------------------------------------------------------------------
+  const mousePanel = document.getElementById("mousePanel");
+  document.getElementById("mouseToggleBtn").addEventListener("click", (e) => {
+    const visible = mousePanel.classList.toggle("visible");
+    e.currentTarget.classList.toggle("locked", visible);
+  });
+
+  document.getElementById("wheelUpBtn").addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    sendControl({t:"wheel", d:1});
+  });
+  document.getElementById("wheelDownBtn").addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    sendControl({t:"wheel", d:-1});
+  });
+
+  // ---------------------------------------------------------------------
+  // Boutons de clic dédiés (gauche / droit) : appui court = clic simple,
+  // appui maintenu = clic maintenu (pour miner en continu par exemple).
+  // ---------------------------------------------------------------------
+  function makeClickButton(el, button){
+    let holdTimer = null;
+    let holding = false;
+
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      el.classList.add("pressed");
+      holdTimer = setTimeout(() => {
+        holding = true;
+        sendControl({t:"mbtn", b:button, s:"down"});
+      }, 180);
+    });
+
+    function release(){
+      el.classList.remove("pressed");
+      clearTimeout(holdTimer);
+      if(holding){
+        sendControl({t:"mbtn", b:button, s:"up"});
+        holding = false;
+      } else {
+        sendControl({t:"mbtn", b:button, s:"down"});
+        setTimeout(() => sendControl({t:"mbtn", b:button, s:"up"}), 50);
+      }
+    }
+    el.addEventListener("pointerup", release);
+    el.addEventListener("pointercancel", release);
+  }
+  makeClickButton(document.getElementById("leftClickBtn"), "left");
+  makeClickButton(document.getElementById("rightClickBtn"), "right");
+
+  // ---------------------------------------------------------------------
+  // Boutons Courir / S'accroupir (verrouillables) + Sauter
+  // ---------------------------------------------------------------------
+  function makeLockButton(el, key){
+    let locked = false;
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      locked = !locked;
+      el.classList.toggle("locked", locked);
+      sendControl({t:"key", k:key, s: locked ? "down" : "up"});
+    });
+  }
+  makeLockButton(document.getElementById("runBtn"), "ctrl");
+  makeLockButton(document.getElementById("crouchBtn"), "shift");
+
+  const jumpBtn = document.getElementById("jumpBtn");
+  jumpBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    jumpBtn.classList.add("pressed");
+    sendControl({t:"key", k:"space", s:"down"});
+  });
+  jumpBtn.addEventListener("pointerup", () => {
+    jumpBtn.classList.remove("pressed");
+    sendControl({t:"key", k:"space", s:"up"});
+  });
+  jumpBtn.addEventListener("pointercancel", () => {
+    jumpBtn.classList.remove("pressed");
+    sendControl({t:"key", k:"space", s:"up"});
+  });
+
+  // ---------------------------------------------------------------------
+  // Clavier virtuel (chat, commandes /, inventaire...)
+  // ---------------------------------------------------------------------
+  const hiddenInput = document.getElementById("hiddenTextInput");
+  document.getElementById("keyboardToggle").addEventListener("click", () => {
+    hiddenInput.value = "";
+    hiddenInput.focus();
+  });
+
+  hiddenInput.addEventListener("input", () => {
+    const val = hiddenInput.value;
+    for(const ch of val){
+      sendControl({t:"char", c: ch});
+    }
+    hiddenInput.value = "";
+  });
+
+  hiddenInput.addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){
+      sendControl({t:"key", k:"enter", s:"down"});
+      setTimeout(() => sendControl({t:"key", k:"enter", s:"up"}), 40);
+    } else if(e.key === "Backspace"){
+      sendControl({t:"key", k:"back", s:"down"});
+      setTimeout(() => sendControl({t:"key", k:"back", s:"up"}), 40);
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
